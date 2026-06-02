@@ -1,0 +1,41 @@
+from aim_fsm import *
+import numpy as np
+
+class Localization(StateMachineProgram):
+    def __init__(self):
+        landmarks = {'ArucoMarker-1': Pose(-152.4 , 304.8 , 0, -pi/2),
+                     'ArucoMarker-2': Pose(152.4 , 304.8 , 0 , -pi/2),
+                     'ArucoMarker-7': Pose(-304.8 , -152.4 , 0 , 0),
+                     'ArucoMarker-8': Pose(-304.8 , 152.4 , 0 , 0),
+                     'ArucoMarker-5': Pose(152.4 , -304.8 , 0 , pi/2),
+                     'ArucoMarker-6': Pose(-152.4 , -304.8 , 0 , pi/2),
+                     'ArucoMarker-3': Pose(304.8 , 152.4 , 0 , -pi),
+                     'ArucoMarker-4': Pose(304.8 , -152.4 , 0 , -pi)}
+        pf = ParticleFilter(robot,
+                            num_particles = 4000, landmarks = landmarks,
+                            sensor_model = ArucoCombinedSensorModel
+                            )
+        super().__init__(particle_filter = pf,
+                         wall_marker_dict = None,
+                         speech = False,
+                         launch_particle_viewer = True)
+
+    def start(self):
+        super().start()
+        a1 = ArucoMarkerObj({'name':'ArucoMarker-1.a', 'id':1, 'marker':None}, x=-152.4, y=304.8, theta=-pi/2, is_fixed=True)
+        a2 = ArucoMarkerObj({'name':'ArucoMarker-2.a', 'id':2, 'marker':None}, x=152.4, y=304.8, theta=-pi/2, is_fixed=True)
+        a3 = ArucoMarkerObj({'name':'ArucoMarker-7.a', 'id':7, 'marker':None}, x=-304.8, y=-152.4, theta=0, is_fixed=True)
+        a4 = ArucoMarkerObj({'name':'ArucoMarker-8.a', 'id':8, 'marker':None}, x=-304.8, y=152.4, theta=0, is_fixed=True)
+        a5 = ArucoMarkerObj({'name':'ArucoMarker-5.a', 'id':5, 'marker':None}, x=152.4, y=-304.8, theta=pi/2, is_fixed=True)
+        a6 = ArucoMarkerObj({'name':'ArucoMarker-6.a', 'id':6, 'marker':None}, x=-152.4, y=-304.8, theta=pi/2, is_fixed=True)
+        a7 = ArucoMarkerObj({'name':'ArucoMarker-3.a', 'id':3, 'marker':None}, x=304.8, y=152.4, theta=-pi, is_fixed=True)
+        a8 = ArucoMarkerObj({'name':'ArucoMarker-4.a', 'id':4, 'marker':None}, x=304.8, y=-152.4, theta=-pi, is_fixed=True)
+        robot.world_map.objects['ArucoMarker-1.a'] = a1
+        robot.world_map.objects['ArucoMarker-2.a'] = a2
+        robot.world_map.objects['ArucoMarker-7.a'] = a3
+        robot.world_map.objects['ArucoMarker-8.a'] = a4
+        robot.world_map.objects['ArucoMarker-5.a'] = a5
+        robot.world_map.objects['ArucoMarker-6.a'] = a6
+        robot.world_map.objects['ArucoMarker-3.a'] = a7
+        robot.world_map.objects['ArucoMarker-4.a'] = a8
+        
