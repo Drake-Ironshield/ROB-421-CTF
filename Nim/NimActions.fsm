@@ -1,0 +1,91 @@
+from aim_fsm import *
+import numpy as np
+
+class LocateBarrel(StateNode):
+    def start(self , event=None):
+
+        super().start(event)
+        currentDistance = 0
+        lowestDistance = 0 
+        closestObj : BarrelObj
+
+        for obj in robot.world_map.objects.values():
+
+            if isinstance(obj , BarrelObj) and obj.is_visible:
+                currentDistance = np.sqrt(np.square(robot.pose.x - obj.pose.x) + np.square(robot.pose.y - obj.pose.y))
+                if currentDistance < lowestDistance or lowestDistance == 0:
+                    closestObj = obj
+                    lowestDistance = currentDistance
+        if lowestDistance == 0:
+            self.post_failure()
+        else:
+            self.post_data(closestObj)
+
+class MoveToBarrel(StateNode):
+    def start(self , event=None):
+        super().start(event)
+        currentDistance = 0;
+        lowestDistance = 0;
+        for obj in robot.world_map.objects.values():
+            if isinstance(obj , BarrelObj) and obj.is_visible:
+                currentDistance = np.sqrt(np.square(robot.pose.x - obj.pose.x) + np.square(robot.pose.y - obj.pose.y))
+                if currentDistance < lowestDistance or lowestDistance == 0:
+                    closestObj = obj
+                    lowestDistance = currentDistance
+        if lowestDistance == 0:
+            self.post_failure()
+        else:
+            self.post_data(lowestDistance)
+        
+
+class ArucoName(StateNode):
+    def start(self , event=None):
+        super().start(event)
+        markerFound = 0
+        for obj in robot.world_map.objects.values():
+            if isinstance(obj , ArucoMarkerObj) and obj.marker_id == 3:
+                self.post_data(obj)
+                markerFound = 1
+
+        if markerFound == 0:
+            self.post_failure()
+
+class ArucoDistance(StateNode):
+    def start(self , event=None):
+        super().start(event)
+        distanceX = 0
+        distanceY = 0
+        markerFound = 0
+        for obj in robot.world_map.objects.values():
+            if isinstance(obj , ArucoMarkerObj) and obj.marker_id == 3:
+                distanceX = obj.pose.x - robot.pose.x
+                distanceY = obj.pose.y - robot.pose.y 
+                distance = np.sqrt(distanceX ** 2 + distanceY ** 2)
+                self.post_data(distance)
+
+        if markerFound == 0:
+            self.post_failure()
+
+class ResetHeading(StateNode):
+    def start(self , event=None):
+        super().start(event)
+        print(robot.pose.theta)
+        self.post_data((-robot.pose.theta * 180) / np.pi)
+        
+                
+class NimActions(StateMachineProgram):
+    $setup{
+        start: ArucoName()
+        start =D=> TurnToward() =C=> ArucoDistance() =D=> Forward() =C=> FindBarrel
+        start =F=> Print("Can't Find Marker")
+
+        FindBarrel: LocateBarrel()
+        FindBarrel =D=> TurnToward() =C=> loop
+        FindBarrel =F=> Print("No Barrel Found") =T(5)=> FindBarrel
+
+
+        loop: MoveToBarrel()
+        loop =D=> Forward() =C=> Turn(180) =C=> Forward(300) =C=> Kick() =C=> Turn(180) =C=> ArucoName() =D=> TurnToward() =C=> ArucoDistance() =D=> Forward() =C=> ResetHeading() =D=> Turn() =C=> FindBarrel 
+        loop =F=> loop
+
+    }
