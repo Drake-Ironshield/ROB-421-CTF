@@ -43,12 +43,7 @@ class Localization(StateMachineProgram):
         robot.world_map.objects['ArucoMarker-3.a'] = a7
         robot.world_map.objects['ArucoMarker-4.a'] = a8
 
-    class IncreaseVariance(StateNode):
-        def start(self , event=None):
-            super().start(event)
-            self.robot.particle_filter.increase_variance();
-
     $setup{
-        loop: Forward(50) =C=> self.IncreaseVariance() =T(1)=> Turn(90) =C=> self.IncreaseVariance() =T(1)=> loop
+        
     }
         
