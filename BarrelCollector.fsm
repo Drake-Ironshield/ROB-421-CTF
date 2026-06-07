@@ -1,0 +1,184 @@
+from aim_fsm import *
+import numpy as np
+
+zonex = -300 # back right corner from starting pose set as goal location
+zoney = -300
+color = OrangeBarrelObj # team color
+
+class LocateBarrel(StateNode):
+    def start(self, event=None):
+        super().start(event)
+        closest = None
+        best_dist = float('inf')
+        for obj in robot.world_map.objects.values():
+            if isinstance(obj, color) and obj.is_visible:
+                dx = obj.pose.x - robot.pose.x 
+                dy = obj.pose.y - robot.pose.y
+                dist = np.sqrt(dx**2 + dy**2)# finding distance same as rest
+                # skip barrels already sitting in the drop zone
+                zdx = obj.pose.x - zonex
+                zdy = obj.pose.y - zoney
+                zdist = np.sqrt(zdx**2 + zdy**2)
+                if zdist <= 150:
+                    continue
+                if dist < best_dist:
+                    best_dist = dist
+                    closest = obj
+        if closest is None:
+            self.post_failure()
+        else:
+            self.parent.target_barrel = closest
+            #print(f"barrel is at {best_dist:.1f}")
+            self.post_data(best_dist)
+
+class TurnToBarrel(StateNode):
+    def start(self, event=None):
+        super().start(event)
+        barrel = getattr(self.parent, 'target_barrel', None)
+        if barrel is None:
+            self.post_failure()
+            return
+        dx = barrel.pose.x - robot.pose.x
+        dy = barrel.pose.y - robot.pose.y
+        bearing = np.degrees(np.arctan2(dy, dx))
+        turn_angle = (bearing - np.degrees(robot.pose.theta) + 180) % 360 - 180
+        #print(f"turning {turn_angle:.1f} deg")
+        self.post_data(turn_angle)
+
+class DriveToBarrel(StateNode):
+    def start(self, event=None):
+        super().start(event)
+        barrel = getattr(self.parent, 'target_barrel', None)
+        if barrel is None:
+            self.post_failure()
+            return
+        dx = barrel.pose.x - robot.pose.x
+        dy = barrel.pose.y - robot.pose.y
+        dist = np.sqrt(dx**2 + dy**2)
+        drive = dist + 80
+        #print(f"driving {drive:.1f} to barrel")
+        self.post_data(drive)
+
+class GrabBarrel(StateNode):
+    def start(self, event=None):
+        super().start(event)
+        barrel = getattr(self.parent, 'target_barrel', None)
+        if barrel is None:
+            #print("grabbarrel - no target barrel")
+            self.post_failure()
+            return
+        robot.holding = barrel
+        barrel.held_by = robot
+        #print(f"grabbarrel - holding {barrel}")
+        self.post_completion()
+
+class ComputeDropTurn(StateNode):  # using steps to approach location to not overshoot or run off into the distance like a problem I was getting origonally.
+    def start(self, event=None):
+        super().start(event)
+        dx = zonex - robot.pose.x
+        dy = zoney - robot.pose.y
+        bearing = np.degrees(np.arctan2(dy, dx))
+        turn_angle = (bearing - np.degrees(robot.pose.theta) + 180) % 360 - 180
+        #print(f"turning toward zone {turn_angle:.1f} deg")
+        self.post_data(turn_angle)
+
+class ApproachDropZone(StateNode):
+    distt = 100
+    dists = 150
+
+    def start(self, event=None):
+        super().start(event)
+        dx = zonex - robot.pose.x
+        dy = zoney - robot.pose.y
+        dist = np.sqrt(dx**2 + dy**2)
+        #print(f"drop zone dist - {dist:.1f}")
+        if dist <= self.distt:
+           # print("at zone")
+            self.post_success()
+        else:
+            step = min(dist, self.dists)
+            #print(f"driving {step:.1f}")
+            self.post_data(step)
+
+class TurnToCenter(StateNode): # retuns the bot to the starting position to look for more barrels, not super accurate but doesnt need to be
+    def start(self, event=None):
+        super().start(event)
+        dx = 0 - robot.pose.x
+        dy = 0 - robot.pose.y
+        bearing = np.degrees(np.arctan2(dy, dx))
+        turn_angle = (bearing - np.degrees(robot.pose.theta) + 180) % 360 - 180
+        #print(f"turning toward center {turn_angle:.1f} deg")
+        self.post_data(turn_angle)
+
+class ApproachOrigin(StateNode): # using steps to approach location to not overshoot or run off into the distance like a problem I was getting origonally.
+    distt = 80
+    dists = 150
+
+    def start(self, event=None):
+        super().start(event)
+        dx = 0 - robot.pose.x
+        dy = 0 - robot.pose.y
+        dist = np.sqrt(dx**2 + dy**2)
+        #print(f"start dist: {dist:.1f}")
+        if dist <= self.distt:
+            #print("Bback at start")
+            self.post_success()
+
+        else:
+            step = min(dist, self.dists)
+            #print(f"driving {step:.1f} toward start")
+            self.post_data(step)
+
+class FaceOriginHeading(StateNode):
+    def start(self, event=None):
+        super().start(event)
+        current = np.degrees(robot.pose.theta)
+        turn_angle = (0 - current + 180) % 360 - 180
+        #print(f"current angle: {current:.1f} deg — turning {turn_angle:.1f} deg to face 0 deg")
+        
+        if abs(turn_angle) < 1.0:
+            #print("Already at 0deg")
+            self.post_completion()
+        else:
+            self.post_data(turn_angle)
+
+class BarrelCollector(StateMachineProgram):
+    $setup{
+
+        start: LocateBarrel()
+        start =F=> Print("barrel not visible") =T(2)=> start
+        start =D=> align
+
+        align: TurnToBarrel()
+        align =F=> start
+        align =D=> Turn() =C=> drive
+
+        drive: DriveToBarrel()
+        drive =F=> start
+        drive =D=> Forward() =C=> grab
+
+        grab: GrabBarrel()
+        grab =F=> start
+        grab =C=> turnDrop
+
+        turnDrop: ComputeDropTurn()
+        turnDrop =D=> Turn() =C=> approach
+
+        approach: ApproachDropZone()
+        approach =D=> Forward() =C=> approach
+        approach =S=> Drop() =C=> delivered
+
+        delivered: Print("barrel in zone")
+        delivered =C=> turnBack
+
+        turnBack: TurnToCenter()
+        turnBack =D=> Turn() =C=> returnHome
+
+        returnHome: ApproachOrigin()
+        returnHome =D=> Forward() =C=> returnHome
+        returnHome =S=> faceOrigin
+
+        faceOrigin: FaceOriginHeading()
+        faceOrigin =D=> Turn() =C=> start
+        faceOrigin =C=> start
+    }
