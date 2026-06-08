@@ -1,0 +1,160 @@
+from aim_fsm import *
+import numpy as np
+
+class barrelGamePosition(StateNode):
+    def __init__(self, tracker_program):
+        # Pass the main program reference so we can access its persistent registry
+        self.tracker = tracker_program
+        super().__init__()
+    
+    def start(self, event=None):
+        blue_win_thresh = -150
+        orange_win_thresh = 150
+        super().start(event)
+
+        ### check for all barrels on the field ###
+        visible_orange = []
+        visible_blue = []
+        
+        for obj in robot.world_map.objects.values():
+            if isinstance(obj, BarrelObj) and getattr(obj, 'is_visible', False):
+                if isinstance(obj, OrangeBarrelObj):
+                    visible_orange.append(obj)
+                elif isinstance(obj, BlueBarrelObj):
+                    visible_blue.append(obj)
+
+        ### orange tracking operations
+        for obj in visible_orange:
+            # if this obj is already tracked, skip it
+            if obj in self.tracker.orange_registry.values():
+                continue
+                
+            # if it isn't being tracked, look for an empty spot in the list or an unseen barrel to assign it to
+            reclaimed = False
+            for slot, registered_obj in self.tracker.orange_registry.items():
+                if registered_obj is None or getattr(registered_obj, 'is_missing', True):
+                    self.tracker.orange_registry[slot] = obj
+                    reclaimed = True
+                    break
+            
+            # if everything is full just ignore it, there shouldn't be more than 3 barrels on the field
+            if not reclaimed and len(self.tracker.orange_registry) < 3:
+                slot_name = f"orange_{len(self.tracker.orange_registry) + 1}"
+                self.tracker.orange_registry[slot_name] = obj
+
+        ### same thing for the blue barrels
+        for obj in visible_blue:
+            if obj in self.tracker.blue_registry.values():
+                continue
+                
+            reclaimed = False
+            for slot, registered_obj in self.tracker.blue_registry.items():
+                if registered_obj is None or getattr(registered_obj, 'is_missing', True):
+                    self.tracker.blue_registry[slot] = obj
+                    reclaimed = True
+                    break
+            
+            if not reclaimed and len(self.tracker.blue_registry) < 3:
+                slot_name = f"blue_{len(self.tracker.blue_registry) + 1}"
+                self.tracker.blue_registry[slot_name] = obj
+
+        ### sort into the 3 different lists
+        self.tracker.orange_cap.clear()
+        self.tracker.blue_cap.clear()
+        self.tracker.uncap.clear()
+
+        ### check if orange barrels are beyond their captured threshold 
+        for obj in self.tracker.orange_registry.values():
+            if obj is not None:
+                if obj.pose.x > orange_win_thresh and obj.pose.y > orange_win_thresh:
+                    self.tracker.orange_cap.append(obj)
+                else:
+                    self.tracker.uncap.append(obj)
+
+        ### check if the blue barrels are beyond their captured threshold
+        for obj in self.tracker.blue_registry.values():
+            if obj is not None:
+                if obj.pose.x < blue_win_thresh and obj.pose.y < blue_win_thresh:
+                    self.tracker.blue_cap.append(obj)
+                else:
+                    self.tracker.uncap.append(obj)
+
+        ### posting the data
+        # calculated the number of barrels being tracked
+        total_tracked = len([x for x in self.tracker.orange_registry.values() if x is not None]) + \
+                        len([x for x in self.tracker.blue_registry.values() if x is not None])
+
+        if total_tracked == 6:
+            self.post_data((self.tracker.orange_cap, self.tracker.blue_cap, self.tracker.uncap))
+        else:
+            print(f"Still initializing... Tracked unique barrels: {total_tracked}/6")
+            self.post_failure()
+
+
+### helper class to print the results for the video demo
+class PrintResultsNode(StateNode):
+    def start(self, event=None):
+        super().start(event)
+        if event and event.data:
+            orange, blue, uncaptured = event.data
+            print("\n--- Barrel Game Update ---")
+            print(f"Captured Orange: {len(orange)} barrels")
+            print(f"Captured Blue:   {len(blue)} barrels")
+            print(f"Uncaptured:      {len(uncaptured)} barrels")
+            print("--------------------------\n")
+
+### main state machine program
+class BarrelTrackerTest(StateMachineProgram):
+    def __init__(self):
+        # tracking lists
+        self.orange_cap = []
+        self.blue_cap = []
+        self.uncap = []
+        
+        # registries to act as permanent trackers for barrels to prevent phantom barrels
+        self.orange_registry = {"orange_1": None, "orange_2": None, "orange_3": None}
+        self.blue_registry = {"blue_1": None, "blue_2": None, "blue_3": None}
+        
+        landmarks = {'ArucoMarker-1': Pose(-152.4 , 304.8 , 0, -pi/2),
+                     'ArucoMarker-2': Pose(152.4 , 304.8 , 0 , -pi/2),
+                     'ArucoMarker-7': Pose(-304.8 , -152.4 , 0 , 0),
+                     'ArucoMarker-8': Pose(-304.8 , 152.4 , 0 , 0),
+                     'ArucoMarker-5': Pose(152.4 , -304.8 , 0 , pi/2),
+                     'ArucoMarker-6': Pose(-152.4 , -304.8 , 0 , pi/2),
+                     'ArucoMarker-3': Pose(304.8 , 152.4 , 0 , -pi),
+                     'ArucoMarker-4': Pose(304.8 , -152.4 , 0 , -pi)}
+        pf = ParticleFilter(robot,
+                            num_particles = 4000, landmarks = landmarks,
+                            sensor_model = ArucoCombinedSensorModel
+                            )
+        super().__init__(particle_filter = pf,
+                         wall_marker_dict = None,
+                         speech = False,
+                         launch_particle_viewer = True)
+        def start(self):
+                super().start()
+                a1 = ArucoMarkerObj({'name':'ArucoMarker-1.a', 'id':1, 'marker':None}, x=-152.4, y=304.8, theta=-pi/2, is_fixed=True)
+                a2 = ArucoMarkerObj({'name':'ArucoMarker-2.a', 'id':2, 'marker':None}, x=152.4, y=304.8, theta=-pi/2, is_fixed=True)
+                a3 = ArucoMarkerObj({'name':'ArucoMarker-7.a', 'id':7, 'marker':None}, x=-304.8, y=-152.4, theta=0, is_fixed=True)
+                a4 = ArucoMarkerObj({'name':'ArucoMarker-8.a', 'id':8, 'marker':None}, x=-304.8, y=152.4, theta=0, is_fixed=True)
+                a5 = ArucoMarkerObj({'name':'ArucoMarker-5.a', 'id':5, 'marker':None}, x=152.4, y=-304.8, theta=pi/2, is_fixed=True)
+                a6 = ArucoMarkerObj({'name':'ArucoMarker-6.a', 'id':6, 'marker':None}, x=-152.4, y=-304.8, theta=pi/2, is_fixed=True)
+                a7 = ArucoMarkerObj({'name':'ArucoMarker-3.a', 'id':3, 'marker':None}, x=304.8, y=152.4, theta=-pi, is_fixed=True)
+                a8 = ArucoMarkerObj({'name':'ArucoMarker-4.a', 'id':4, 'marker':None}, x=304.8, y=-152.4, theta=-pi, is_fixed=True)
+                robot.world_map.objects['ArucoMarker-1.a'] = a1
+                robot.world_map.objects['ArucoMarker-2.a'] = a2
+                robot.world_map.objects['ArucoMarker-7.a'] = a3
+                robot.world_map.objects['ArucoMarker-8.a'] = a4
+                robot.world_map.objects['ArucoMarker-5.a'] = a5
+                robot.world_map.objects['ArucoMarker-6.a'] = a6
+                robot.world_map.objects['ArucoMarker-3.a'] = a7
+                robot.world_map.objects['ArucoMarker-4.a'] = a8
+
+    $setup{
+        check: barrelGamePosition(self)
+        print_node: PrintResultsNode()
+        
+        check =D=> print_node
+        print_node =T(1)=> check
+        check =F=> StateNode() =T(1)=> check
+    }

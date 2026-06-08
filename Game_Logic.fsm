@@ -1,0 +1,311 @@
+from aim_fsm import *
+import numpy as np
+
+
+class TeamSelect(StateNode):
+
+    def start(self, event=None):
+        super().start(event)
+
+        # TODO:
+        # Replace with voice recognition event
+
+        team = input("Enter team (blue/orange): ").strip().lower()
+
+        while team not in ["blue", "orange"]:
+            team = input("Enter team (blue/orange): ").strip().lower()
+
+        self.robot.team = team
+
+        print(f"Team set to {team}")
+
+        self.post_completion()
+
+class WaitForStart(StateNode):
+
+    def start(self, event=None):
+        super().start(event)
+
+        print("\nWaiting for START command...")
+
+        #
+        # TEMPORARY VERSION
+        #
+        while True:
+
+            command = input("Say START: ").strip().lower()
+
+            if command == "start":
+                break
+
+        print("Match started.")
+
+        self.post_completion()
+
+
+class BarrelLogic(StateNode):
+
+    def start(self, event=None):
+        super().start(event)
+
+        self.orange_barrels = []
+        self.blue_barrels = []
+
+        for obj in self.robot.world_map.objects.values():
+
+            if isinstance(obj, OrangeBarrelObj):
+                self.orange_barrels.append(obj)
+
+            elif isinstance(obj, BlueBarrelObj):
+                self.blue_barrels.append(obj)
+
+        if self.robot.team == "blue":
+
+            self.robot.team_barrels = self.blue_barrels
+            self.robot.op_barrels = self.orange_barrels
+
+            # lower left scoring corner
+            self.robot.scoring_zone = (-5, -5)
+
+        else:
+
+            self.robot.team_barrels = self.orange_barrels
+            self.robot.op_barrels = self.blue_barrels
+
+            # upper right scoring corner
+            self.robot.scoring_zone = (5, 5)
+
+        self.robot.unscored_team_barrels = []
+
+        for barrel in self.robot.team_barrels:
+
+            if not self.in_scoring_zone(barrel):
+
+                self.robot.unscored_team_barrels.append(barrel)
+
+        print(
+            f"Found {len(self.robot.unscored_team_barrels)} "
+            f"team barrels needing scoring"
+        )
+
+        self.post_completion()
+
+    def in_scoring_zone(self, barrel):
+
+        x = barrel.pose.x
+        y = barrel.pose.y
+
+        sx, sy = self.robot.scoring_zone
+
+        if sx < 0:
+            x_ok = x < 0
+        else:
+            x_ok = x > 0
+
+        if sy < 0:
+            y_ok = y < 0
+        else:
+            y_ok = y > 0
+
+        return x_ok and y_ok
+
+
+class DecisionLogic(StateNode):
+
+    def start(self, event=None):
+        super().start(event)
+
+        #
+        # Priority 1:
+        # Score our barrels
+        #
+        if len(self.robot.unscored_team_barrels) > 0:
+
+            target = self.find_closest_barrel(
+                self.robot.unscored_team_barrels
+            )
+
+            print(
+                f"Scoring team barrel at "
+                f"({target.pose.x:.1f}, {target.pose.y:.1f})"
+            )
+
+            self.robot.target_barrel = target
+            self.robot.action = "score"
+
+            self.post_completion()
+            return
+
+        #
+        # Priority 2:
+        # Interfere with enemy robot
+        #
+        for obj in self.robot.world_map.objects.values():
+
+            if isinstance(obj, RobotObj):
+
+                sx, sy = self.robot.scoring_zone
+
+                if (
+                    obj.pose.x * sx > 0 and
+                    obj.pose.y * sy > 0
+                ):
+
+                    print("Enemy robot detected")
+
+                    self.robot.target_robot = obj
+                    self.robot.action = "interfere"
+
+                    self.post_completion()
+                    return
+
+        #
+        # Priority 3:
+        # Descore enemy barrels
+        #
+        for barrel in self.robot.op_barrels:
+
+            sx, sy = self.robot.scoring_zone
+
+            if (
+                abs(barrel.pose.x) > abs(sx) and
+                abs(barrel.pose.y) > abs(sy)
+            ):
+
+                self.robot.target_barrel = barrel
+                self.robot.action = "descore"
+
+                print(
+                    f"Descore barrel at "
+                    f"({barrel.pose.x:.1f}, {barrel.pose.y:.1f})"
+                )
+
+                self.post_completion()
+                return
+
+        self.robot.action = "idle"
+
+        print("No valid action")
+
+        self.post_completion()
+
+    def find_closest_barrel(self, barrels):
+
+        robot_x = self.robot.pose.x
+        robot_y = self.robot.pose.y
+
+        closest = None
+        best_dist = 1e9
+
+        for barrel in barrels:
+
+            dx = barrel.pose.x - robot_x
+            dy = barrel.pose.y - robot_y
+
+            dist = np.sqrt(dx**2 + dy**2)
+
+            if dist < best_dist:
+
+                best_dist = dist
+                closest = barrel
+
+        return closest
+
+
+class ExecuteAction(StateNode):
+
+    def start(self, event=None):
+        super().start(event)
+
+        action = self.robot.action
+
+        #
+        # SCORE BARREL
+        #
+        if action == "score":
+
+            barrel = self.robot.target_barrel
+
+            print(
+                f"Move to barrel "
+                f"({barrel.pose.x:.1f}, {barrel.pose.y:.1f})"
+            )
+
+            #
+            # TODO:
+            #
+            # Drive to barrel
+            # Contact grabs barrel magnetically
+            # Drive to scoring zone
+            # Kick to release
+            #
+
+            self.post_completion()
+
+        #
+        # DESCORE BARREL
+        #
+        elif action == "descore":
+
+            barrel = self.robot.target_barrel
+
+            target_x = np.random.choice([-10, 10])
+            target_y = np.random.choice([-10, 10])
+
+            print(
+                f"Move enemy barrel to "
+                f"({target_x}, {target_y})"
+            )
+
+            #
+            # TODO:
+            #
+            # Drive to barrel
+            # Drag to target_x,target_y
+            # Kick release
+            #
+
+            self.post_completion()
+
+        #
+        # INTERFERE WITH ROBOT
+        #
+        elif action == "interfere":
+
+            enemy = self.robot.target_robot
+
+            print(
+                f"Interfering with robot at "
+                f"({enemy.pose.x:.1f}, {enemy.pose.y:.1f})"
+            )
+
+            #
+            # TODO:
+            # Navigate into robot path
+            #
+
+            self.post_completion()
+
+        else:
+
+            self.post_completion()
+
+
+class RunGame(StateMachineProgram):
+
+    $setup{
+
+        team = TeamSelect()
+
+        scan = BarrelLogic()
+
+        decide = DecisionLogic()
+
+        execute = ExecuteAction()
+
+        team =N=> scan
+        scan =N=> decide
+        decide =N=> execute
+        execute =N=> scan
+
+    }
