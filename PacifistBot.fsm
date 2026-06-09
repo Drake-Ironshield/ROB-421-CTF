@@ -1,6 +1,161 @@
 from aim_fsm import *
 import numpy as np
 
+zonex = 225 # back right corner from starting pose set as goal location
+zoney = 225
+color = OrangeBarrelObj # team color
+
+######################################
+#---Movement and Barrel Collection---#
+######################################
+
+class LocateUnsecureBarrel(StateNode):
+    def __init__(self, tracker_program):
+        # Pass the main program reference so we can access its persistent registry
+        self.tracker = tracker_program
+        super().__init__()
+
+    def start(self, event=None):
+        super().start(event)
+        closest = None
+        best_dist = float('inf')
+        for obj in self.tracker.uncap:
+            if isinstance(obj, color) and not obj.is_missing:
+                dx = obj.pose.x - robot.pose.x 
+                dy = obj.pose.y - robot.pose.y
+                dist = np.sqrt(dx**2 + dy**2)# finding distance same as rest
+                if dist < best_dist:
+                    best_dist = dist
+                    closest = obj
+        if closest is None:
+            self.post_failure()
+        else:
+            self.parent.target_barrel = closest
+            #print(f"barrel is at {best_dist:.1f}")
+            self.post_data(best_dist)
+
+class TurnToBarrel(StateNode):
+    def start(self, event=None):
+        super().start(event)
+        barrel = getattr(self.parent, 'target_barrel', None)
+        if barrel is None:
+            self.post_failure()
+            return
+        dx = barrel.pose.x - robot.pose.x
+        dy = barrel.pose.y - robot.pose.y
+        bearing = np.degrees(np.arctan2(dy, dx))
+        turn_angle = (bearing - np.degrees(robot.pose.theta) + 180) % 360 - 180
+        #print(f"turning {turn_angle:.1f} deg")
+        self.post_data(turn_angle)
+
+class DriveToBarrel(StateNode):
+    def start(self, event=None):
+        super().start(event)
+        barrel = getattr(self.parent, 'target_barrel', None)
+        if barrel is None:
+            self.post_failure()
+            return
+        dx = barrel.pose.x - robot.pose.x
+        dy = barrel.pose.y - robot.pose.y
+        dist = np.sqrt(dx**2 + dy**2)
+        drive = dist + 80
+        #print(f"driving {drive:.1f} to barrel")
+        self.post_data(drive)
+
+class GrabBarrel(StateNode):
+    def start(self, event=None):
+        super().start(event)
+        barrel = getattr(self.parent, 'target_barrel', None)
+        if barrel is None:
+            #print("grabbarrel - no target barrel")
+            self.post_failure()
+            return
+        if self.robot.holding is not None:
+            if isinstance(self.robot.holding , OrangeBarrelObj):
+                prevHold = self.robot.holding
+                self.robot.holding = barrel
+                #Remove Previous Barrel
+            else:
+                self.post_failure()
+        else:
+            self.post_failure()
+        #print(f"grabbarrel - holding {barrel}")
+        self.post_completion()
+
+class ComputeDropTurn(StateNode):  # using steps to approach location to not overshoot or run off into the distance like a problem I was getting origonally.
+    def start(self, event=None):
+        super().start(event)
+        dx = zonex - robot.pose.x
+        dy = zoney - robot.pose.y
+        bearing = np.degrees(np.arctan2(dy, dx))
+        turn_angle = (bearing - np.degrees(robot.pose.theta) + 180) % 360 - 180
+        #print(f"turning toward zone {turn_angle:.1f} deg")
+        self.post_data(turn_angle)
+
+class ApproachDropZone(StateNode):
+    distt = 100
+    dists = 150
+
+    def start(self, event=None):
+        super().start(event)
+        dx = zonex - robot.pose.x
+        dy = zoney - robot.pose.y
+        dist = np.sqrt(dx**2 + dy**2)
+        #print(f"drop zone dist - {dist:.1f}")
+        if dist <= self.distt:
+           # print("at zone")
+            self.post_success()
+        else:
+            step = min(dist, self.dists)
+            #print(f"driving {step:.1f}")
+            self.post_data(step)
+
+class TurnToCenter(StateNode): # retuns the bot to the starting position to look for more barrels, not super accurate but doesnt need to be
+    def start(self, event=None):
+        super().start(event)
+        dx = 0 - robot.pose.x
+        dy = 0 - robot.pose.y
+        bearing = np.degrees(np.arctan2(dy, dx))
+        turn_angle = (bearing - np.degrees(robot.pose.theta) + 180) % 360 - 180
+        #print(f"turning toward center {turn_angle:.1f} deg")
+        self.post_data(turn_angle)
+
+class ApproachOrigin(StateNode): # using steps to approach location to not overshoot or run off into the distance like a problem I was getting origonally.
+    distt = 80
+    dists = 150
+
+    def start(self, event=None):
+        super().start(event)
+        dx = 0 - robot.pose.x
+        dy = 0 - robot.pose.y
+        dist = np.sqrt(dx**2 + dy**2)
+        #print(f"start dist: {dist:.1f}")
+        if dist <= self.distt:
+            #print("Bback at start")
+            self.post_success()
+
+        else:
+            step = min(dist, self.dists)
+            #print(f"driving {step:.1f} toward start")
+            self.post_data(step)
+
+class FaceOriginHeading(StateNode):
+    def start(self, event=None):
+        super().start(event)
+        current = np.degrees(robot.pose.theta)
+        turn_angle = (0 - current + 180) % 360 - 180
+        #print(f"current angle: {current:.1f} deg — turning {turn_angle:.1f} deg to face 0 deg")
+        
+        if abs(turn_angle) < 1.0:
+            #print("Already at 0deg")
+            self.post_completion()
+        else:
+            self.post_data(turn_angle)
+
+#######################
+#---Barrel Tracking---#
+#######################
+
 class barrelGamePosition(StateNode):
     def __init__(self, tracker_program):
         # Pass the main program reference so we can access its persistent registry
@@ -70,6 +225,7 @@ class barrelGamePosition(StateNode):
                     self.tracker.orange_cap.append(obj)
                 else:
                     self.tracker.uncap.append(obj)
+                    
 
         ### check if the blue barrels are beyond their captured threshold
         for obj in self.tracker.blue_registry.values():
@@ -102,10 +258,27 @@ class PrintResultsNode(StateNode):
             print(f"Captured Blue:   {len(blue)} barrels")
             print(f"Uncaptured:      {len(uncaptured)} barrels")
             print("--------------------------\n")
+        self.post_success()
 
-### main state machine program
-class BarrelTrackerTest(StateMachineProgram):
+class ClearWorld(StateNode):
+    def start(self , event=None):
+        super().start(event)
+        robot.world_map.clear()
+        self.post_success
+
+class PrintPosition(StateNode):
+    def start(self , event=None):
+        super().start(event)
+        print("Robot X: " ,  robot.pose.x , "| Robot y: " , robot.pose.y)
+
+
+##################
+#---Main Class---#
+##################
+
+class PacifistBot(StateMachineProgram):
     def __init__(self):
+
         # tracking lists
         self.orange_cap = []
         self.blue_cap = []
@@ -150,30 +323,39 @@ class BarrelTrackerTest(StateMachineProgram):
                 robot.world_map.objects['ArucoMarker-3.a'] = a7
                 robot.world_map.objects['ArucoMarker-4.a'] = a8
 
-    def setup(self):
-        #         check: barrelGamePosition(self)
-        #         print_node: PrintResultsNode()
-        #         
-        #         check =D=> print_node
-        #         print_node =T(1)=> check
-        #         check =F=> StateNode() =T(1)=> check
-        
-        # Code generated by genfsm on Mon Jun  8 17:46:02 2026:
-        
-        check = barrelGamePosition(self) .set_name("check") .set_parent(self)
-        print_node = PrintResultsNode() .set_name("print_node") .set_parent(self)
-        statenode1 = StateNode() .set_name("statenode1") .set_parent(self)
-        
-        datatrans1 = DataTrans() .set_name("datatrans1")
-        datatrans1 .add_sources(check) .add_destinations(print_node)
-        
-        timertrans1 = TimerTrans(1) .set_name("timertrans1")
-        timertrans1 .add_sources(print_node) .add_destinations(check)
-        
-        failuretrans1 = FailureTrans() .set_name("failuretrans1")
-        failuretrans1 .add_sources(check) .add_destinations(statenode1)
-        
-        timertrans2 = TimerTrans(1) .set_name("timertrans2")
-        timertrans2 .add_sources(statenode1) .add_destinations(check)
-        
-        return self
+    $setup{
+        Localize: Forward(50) =C=> Turn(135) =C=> ClearWorld() =T(1)=> InitBarrels
+
+        InitBarrels: barrelGamePosition(self)
+        InitBarrels =D=> PrintResultsNode() =S=> {UpdateBarrels , locate}
+        InitBarrels =F=> Turn(-45) =T(4)=> InitBarrels
+
+        UpdateBarrels: barrelGamePosition(self)
+        UpdateBarrels =D=> PrintResultsNode() =T(1)=> UpdateBarrels
+        UpdateBarrels =F=> Print() =T(1)=> UpdateBarrels
+
+        locate: LocateUnsecureBarrel(self)
+        locate =F=> Print("Couldn't Locate Barrel") =C=> Remap
+        locate =D=> align
+
+        Remap: Turn(45) =T(3)=> Turn(45) =T(3)=> Turn(45) =T(3)=> Turn(45) =T(3)=> Turn(45) =T(3)=> Turn(45) =T(3)=> Turn(45) =T(3)=> Turn(45) =T(3)=> locate
+
+        align: TurnToBarrel()
+        align =F=> locate
+        align =D=> Turn() =T(5)=> drive
+
+        drive: DriveToBarrel()
+        drive =F=> locate
+        drive =D=> Forward() =T(5)=> grab
+
+        grab: GrabBarrel()
+        grab =F=> Kick() =C=> Remap
+        grab =C=> turnDrop
+
+        turnDrop: ComputeDropTurn()
+        turnDrop =D=> Turn() =T(5)=> approach
+
+        approach: ApproachDropZone()
+        approach =D=> Forward() =C=> approach
+        approach =S=> Kick() =C=> Print("Barrel Dropped In Zone") =C=> Forward(-50) =T(2)=> locate
+    }
