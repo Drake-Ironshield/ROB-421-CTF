@@ -357,5 +357,7 @@ class PacifistBot(StateMachineProgram):
 
         approach: ApproachDropZone()
         approach =D=> Forward() =C=> approach
-        approach =S=> Kick() =C=> Print("Barrel Dropped In Zone") =C=> Forward(-50) =T(2)=> locate
+        approach =S=> Kick() =C=> Print("Barrel Dropped In Zone") =C=> Forward(-50) =T(2)=> DropZoneLocate
+
+        DropZoneLocate: Turn(45) =T(3)=> Turn(45) =T(3)=> Turn(45) =T(3)=> Turn(45) =T(3)=> Turn(45) =T(3)=> Turn(45) =T(3)=> locate
     }
