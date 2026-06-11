@@ -98,6 +98,9 @@ class ApproachDropZone(StateNode):
 
     def start(self, event=None):
         super().start(event)
+        if (robot.pose.x > 350 or robot.pose.x < -350 or robot.pose.y > 350 or robot.pose.y < -350):
+            self.robot.particle_filter.delocalize()
+            self.post_failure()
         dx = zonex - robot.pose.x
         dy = zoney - robot.pose.y
         dist = np.sqrt(dx**2 + dy**2)
@@ -357,6 +360,7 @@ class PacifistBot(StateMachineProgram):
 
         approach: ApproachDropZone()
         approach =D=> Forward() =C=> approach
+        approach =F=> Remap
         approach =S=> Kick() =C=> Print("Barrel Dropped In Zone") =C=> Forward(-50) =T(2)=> DropZoneLocate
 
         DropZoneLocate: Turn(45) =T(3)=> Turn(45) =T(3)=> Turn(45) =T(3)=> Turn(45) =T(3)=> Turn(45) =T(3)=> Turn(45) =T(3)=> locate
